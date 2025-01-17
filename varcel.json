@@ -2,14 +2,14 @@
     "version": 2,
     "builds": [
         {
-            "src": "uvicorn main:app --reload",
+            "src": "app.py",
             "use": "@vercel/python"
         }
     ],
     "routes": [
         {
             "src": "/(.*)",
-            "dest": "uvicorn main:app --reload"
+            "dest": "app.py"
         }
     ]
 }
