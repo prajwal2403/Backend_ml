@@ -127,6 +127,11 @@ def check_uploaded_data():
 async def value_error_handler(request, exc):
     return JSONResponse(content={"error": str(exc)}, status_code=400)
 
+@app.get("/")
+async def testing():
+    return "Hello World"
+
+
 @app.post("/upload/")
 async def upload_and_preview_file(file: UploadFile = File(...)):
     global uploaded_data, is_data_cleaned, is_feature_engineering_applied
