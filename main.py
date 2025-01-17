@@ -98,6 +98,9 @@ import dask.dataframe as dd
 
 app = FastAPI()
 
+port = int(os.environ.get("PORT", 8000))  # Default to 8000 if PORT is not set
+
+
 # Allow CORS for frontend
 app.add_middleware(
     CORSMiddleware,
@@ -620,4 +623,4 @@ async def download_cleaned_data():
 # Run the FastAPI app
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=port)
