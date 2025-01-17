@@ -99,7 +99,7 @@ app = FastAPI()
 # Allow CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],  # React frontend URL
+    allow_origins=["http://localhost:5173", "http://localhost:4173"],  # React frontend URL
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
@@ -119,25 +119,19 @@ is_feature_engineering_applied = False  # Flag to track if feature engineering i
 # Helper function to check dataset existence
 
 
-@app.exception_handler(ValueError)
-async def value_error_handler(request, exc):
-    return JSONResponse(content={"error": str(exc)}, status_code=400)
-
 def check_uploaded_data():
     if uploaded_data is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded. Please upload a dataset first.")
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request, exc):
+    return JSONResponse(content={"error": str(exc)}, status_code=400)
 
 @app.post("/upload/")
-async def upload_and_preview_file(
-    file: UploadFile = File(..., description="Upload CSV or Excel file"),
-):
-    global uploaded_data
+async def upload_and_preview_file(file: UploadFile = File(...)):
+    global uploaded_data, is_data_cleaned, is_feature_engineering_applied
     if not file:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "No file provided"}
-        )
+        return JSONResponse(status_code=400, content={"detail": "No file provided"})
     
     try:
         contents = await file.read()
@@ -148,31 +142,30 @@ async def upload_and_preview_file(
         elif file.filename.endswith((".xls", ".xlsx")):
             uploaded_data = pd.read_excel(file_stream)
         else:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": "Unsupported file type"}
-            )
+            return JSONResponse(status_code=400, content={"detail": "Unsupported file type"})
+        
+        # Reset flags when new data is uploaded
+        is_data_cleaned = False
+        is_feature_engineering_applied = False
+        
+        # Convert preview data to JSON serializable format
+        preview = uploaded_data.head().replace({np.nan: None}).to_dict(orient="records")
         
         return {
             "status": "success",
             "message": "File uploaded successfully",
+            "preview": preview,
             "rows": len(uploaded_data),
             "columns": len(uploaded_data.columns)
         }
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Upload failed: {str(e)}"}
-        )
+        return JSONResponse(status_code=500, content={"detail": f"Upload failed: {str(e)}"})
 
 @app.get("/get-data-info/")
 def get_data_info():
     check_uploaded_data()
-    preview = uploaded_data.head().to_dict(orient="records")
-    missing_values = {
-        col: count for col, count in uploaded_data.isnull().sum().items() 
-        if count > 0
-    }
+    preview = uploaded_data.head().replace({np.nan: None}).to_dict(orient="records")
+    missing_values = uploaded_data.isnull().sum().to_dict()
     
     return {
         "preview": preview,
@@ -190,9 +183,8 @@ def clean_data(fill_value: str = None, drop_threshold: float = None):
     if fill_value:
         uploaded_data = uploaded_data.fillna(fill_value)
     if drop_threshold:
-        uploaded_data = uploaded_data.dropna(thresh=int(drop_threshold * uploaded_data.shape[1]), axis=1)
+        uploaded_data = uploaded_data.dropna(thresh=int(drop_threshold * uploaded_data.shape[1]))
     
-    # Set the flag to True after cleaning
     is_data_cleaned = True
     
     return {
@@ -203,16 +195,26 @@ def clean_data(fill_value: str = None, drop_threshold: float = None):
         "removed_rows": initial_shape[0] - uploaded_data.shape[0],
         "removed_columns": initial_shape[1] - uploaded_data.shape[1]
     }
+
+
+
+
+
 @app.post("/feature-engineering/")
 def feature_engineering(request: FeatureEngineeringRequest):
     global uploaded_data, is_data_cleaned, is_feature_engineering_applied
     check_uploaded_data()
     
-    # Check if data has been cleaned
     if not is_data_cleaned:
         raise HTTPException(
             status_code=400,
             detail="Data must be cleaned before applying feature engineering. Please call /clean-data/ first."
+        )
+    
+    if request.method not in ["normalize", "standardize"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid method. Supported methods are 'normalize' and 'standardize'."
         )
     
     numeric_cols = uploaded_data.select_dtypes(include="number").columns
@@ -228,20 +230,19 @@ def feature_engineering(request: FeatureEngineeringRequest):
             scaler = StandardScaler()
             uploaded_data[numeric_cols] = scaler.fit_transform(uploaded_data[numeric_cols])
             scaling_type = "standardization"
-        else:
-            return {"status": "error", "message": "Invalid scaling method"}
         
-        # Set the flag to True after feature engineering
         is_feature_engineering_applied = True
         
         return {
             "status": "success",
             "message": f"Applied {scaling_type} to {len(numeric_cols)} numeric columns",
             "scaled_columns": numeric_cols.tolist(),
-            "preview": uploaded_data[numeric_cols].head().to_dict(orient="records")
+            "preview": uploaded_data[numeric_cols].head().replace({np.nan: None}).to_dict(orient="records")
         }
     except Exception as e:
-        return {"status": "error", "message": f"Scaling failed: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Scaling failed: {str(e)}")
+    
+
 @app.post("/recommend-learning/")
 def recommend_learning() -> Dict[str, Any]:
     """
@@ -464,92 +465,169 @@ async def lazy_predict_endpoint(background_tasks: BackgroundTasks):
     background_tasks.add_task(gc.collect)
     return result
 
+
+
+
+
 @app.get("/visualize/{type}/")
 def visualize(type: str):
-    global lazy_predict_resultsuvicorn 
-    if lazy_predict_results is None:
-        raise HTTPException(status_code=400, detail="Run /lazy-predict/ first to generate results.")
+    global uploaded_data, lazy_predict_results
+    check_uploaded_data()
+    
     img_buffer = io.BytesIO()
-
+    plt.figure(figsize=(10, 6))
+    
     try:
         if type == "data-quality":
-            plt.figure(figsize=(10, 6))
             sns.heatmap(uploaded_data.isnull(), cbar=False, cmap="viridis")
             plt.title("Data Quality Analysis (Missing Values Heatmap)")
-
+            
         elif type == "correlation":
-            plt.figure(figsize=(12, 8))
-            sns.heatmap(uploaded_data.corr(), annot=True, cmap="coolwarm", fmt=".2f")
-            plt.title("Correlation Heatmap")
-
-        elif type == "model-performance":
-            try:
-                models = lazy_predict_results["model_results"]["top_models"]
-
-                # Extract model names and accuracy scores from the provided structure
-                model_names = [model["Model"] for model in models]
-                scores = [model["Accuracy"] for model in models]
-
-                # Plot the bar chart
-                plt.figure(figsize=(10, 6))
-                sns.barplot(x=model_names, y=scores, palette="Blues_d")
-                plt.title("Top Model Performance Metrics")
-                plt.xlabel("Model")
-                plt.ylabel("Accuracy")
-            except KeyError as e:
-                raise HTTPException(status_code=500, detail=f"Missing key in model results: {e}")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Error creating visualization: {e}")
-
-
+            numeric_data = uploaded_data.select_dtypes(include=[np.number])
+            if len(numeric_data.columns) > 1:
+                sns.heatmap(numeric_data.corr(), annot=True, cmap="coolwarm", fmt=".2f")
+                plt.title("Correlation Heatmap")
+            else:
+                raise HTTPException(status_code=400, detail="Not enough numeric columns for correlation analysis")
+                
+        elif type == "model-performance" and lazy_predict_results:
+            models = lazy_predict_results["model_results"]["top_models"]
+            model_names = [model["Model"] for model in models]
+            scores = [model["Accuracy"] for model in models]
+            sns.barplot(x=model_names, y=scores, palette="Blues_d")
+            plt.title("Top Model Performance Metrics")
+            plt.xlabel("Model")
+            plt.ylabel("Accuracy")
+            
         else:
-            raise HTTPException(status_code=400, detail="Invalid visualization type.")
-
+            raise HTTPException(status_code=400, detail="Invalid visualization type or no prediction results available")
+            
         plt.tight_layout()
         plt.savefig(img_buffer, format="png")
         plt.close()
         img_buffer.seek(0)
         return StreamingResponse(img_buffer, media_type="image/png")
-
+        
     except Exception as e:
+        plt.close()
         raise HTTPException(status_code=500, detail=f"Error creating visualization: {str(e)}")
+
+
+@app.get("/visualize/feature-importance/")
+def visualize_feature_importance():
+    global lazy_predict_results
+    check_uploaded_data()
+    
+    if lazy_predict_results is None:
+        raise HTTPException(status_code=400, detail="Run /lazy-predict/ first to generate feature importance.")
+    
+    try:
+        feature_importance = lazy_predict_results.get("feature_importance", {})
+        if not feature_importance:
+            raise HTTPException(status_code=400, detail="No feature importance data available. Run /lazy-predict/ first.")
+        
+        features = list(feature_importance.keys())
+        importance_values = list(feature_importance.values())
+        
+        plt.figure(figsize=(10, 6))
+        sns.barplot(x=importance_values, y=features, palette="viridis")
+        plt.title("Feature Importance")
+        plt.xlabel("Importance Score")
+        plt.ylabel("Features")
+        
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format="png")
+        plt.close()
+        img_buffer.seek(0)
+        
+        return StreamingResponse(img_buffer, media_type="image/png")
+    except Exception as e:
+        print(f"Error in /visualize/feature-importance/: {str(e)}")  # Log the error
+        raise HTTPException(status_code=500, detail=f"Error creating feature importance visualization: {str(e)}")
+@app.get("/visualize/distribution/")
+
+
+
+@app.get("/visualize/distribution/")
+def visualize_distribution(column: str):
+    global uploaded_data
+    check_uploaded_data()
+    
+    if column not in uploaded_data.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{column}' not found in dataset.")
+    
+    try:
+        plt.figure(figsize=(10, 6))
+        if pd.api.types.is_numeric_dtype(uploaded_data[column]):
+            sns.histplot(uploaded_data[column], kde=True)
+            plt.title(f"Distribution of {column}")
+        else:
+            sns.countplot(y=uploaded_data[column])
+            plt.title(f"Value Counts for {column}")
+        
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format="png")
+        plt.close()
+        img_buffer.seek(0)
+        
+        return StreamingResponse(img_buffer, media_type="image/png")
+    except Exception as e:
+        print(f"Error in /visualize/distribution/: {str(e)}")  # Log the error
+        raise HTTPException(status_code=500, detail=f"Error creating distribution visualization: {str(e)}")
+    
+
+
+@app.get("/visualize/word-cloud/")
+def visualize_word_cloud(column: str):
+    global uploaded_data
+    check_uploaded_data()
+    
+    if column not in uploaded_data.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{column}' not found in dataset.")
+    
+    if not pd.api.types.is_string_dtype(uploaded_data[column]):
+        raise HTTPException(status_code=400, detail=f"Column '{column}' must contain text data.")
+    
+    try:
+        text_data = " ".join(uploaded_data[column].dropna().astype(str))
+        wordcloud = WordCloud(width=800, height=400, background_color="white").generate(text_data)
+        
+        plt.figure(figsize=(10, 6))
+        plt.imshow(wordcloud, interpolation="bilinear")
+        plt.axis("off")
+        plt.title(f"Word Cloud for {column}")
+        
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format="png")
+        plt.close()
+        img_buffer.seek(0)
+        
+        return StreamingResponse(img_buffer, media_type="image/png")
+    except Exception as e:
+        print(f"Error in /visualize/word-cloud/: {str(e)}")  # Log the error
+        raise HTTPException(status_code=500, detail=f"Error creating word cloud: {str(e)}")
+    
+
 from fastapi.responses import StreamingResponse
 import io
 
 @app.get("/download/")
 async def download_cleaned_data():
-    """
-    Endpoint to download the cleaned and feature-engineered dataset.
-    """
+    global uploaded_data
+    check_uploaded_data()
+    
+    if not is_data_cleaned:
+        raise HTTPException(status_code=400, detail="Data must be cleaned before downloading")
+    
     try:
-        # Check if dataset has been uploaded
-        if uploaded_data is None:
-            raise HTTPException(status_code=400, detail="Dataset not uploaded or processed yet.")
-        
-        # Check if data has been cleaned
-        if not is_data_cleaned:
-            raise HTTPException(
-                status_code=400,
-                detail="Data must be cleaned before downloading. Please call /clean-data/ first."
-            )
-
-        # Check if feature engineering has been applied
-        if not is_feature_engineering_applied:
-            raise HTTPException(
-                status_code=400,
-                detail="Feature engineering must be applied before downloading. Please call /feature-engineering/ first."
-            )
-
-        # Convert the processed DataFrame to a CSV format
-        data_buffer = io.StringIO()
-        uploaded_data.to_csv(data_buffer, index=False)  # Use the global uploaded_data
-        data_buffer.seek(0)  # Reset buffer position
-
-        # Return as a downloadable file
-        return StreamingResponse(
-            data_buffer,
+        # Convert DataFrame to CSV
+        stream = StringIO()
+        uploaded_data.to_csv(stream, index=False)
+        response = StreamingResponse(
+            iter([stream.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=feature_engineered_dataset.csv"}
+            headers={"Content-Disposition": "attachment; filename=processed_data.csv"}
         )
+        return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating download file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating download file: {str(e)}")
