@@ -98,7 +98,7 @@ import dask.dataframe as dd
 
 app = FastAPI()
 
-port = int(os.environ.get("PORT", 8000))  # Default to 8000 if PORT is not set
+port = int(os.environ.get("PORT", 8000))   # Default to 8000 if PORT is not set
 
 
 # Allow CORS for frontend
