@@ -76,6 +76,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
+
 # System and Utilities
 import warnings
 import os
@@ -94,6 +95,7 @@ import psutil
 
 # Large Data Handling
 import dask.dataframe as dd
+
 app = FastAPI()
 
 # Allow CORS for frontend
@@ -115,10 +117,7 @@ lazy_predict_results = None
 is_data_cleaned = False  # Flag to track if data is cleaned
 is_feature_engineering_applied = False  # Flag to track if feature engineering is applied
 
-
 # Helper function to check dataset existence
-
-
 def check_uploaded_data():
     if uploaded_data is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded. Please upload a dataset first.")
@@ -130,7 +129,6 @@ async def value_error_handler(request, exc):
 @app.get("/")
 async def testing():
     return "Hello World"
-
 
 @app.post("/upload/")
 async def upload_and_preview_file(file: UploadFile = File(...)):
@@ -201,10 +199,6 @@ def clean_data(fill_value: str = None, drop_threshold: float = None):
         "removed_columns": initial_shape[1] - uploaded_data.shape[1]
     }
 
-
-
-
-
 @app.post("/feature-engineering/")
 def feature_engineering(request: FeatureEngineeringRequest):
     global uploaded_data, is_data_cleaned, is_feature_engineering_applied
@@ -246,7 +240,6 @@ def feature_engineering(request: FeatureEngineeringRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scaling failed: {str(e)}")
-    
 
 @app.post("/recommend-learning/")
 def recommend_learning() -> Dict[str, Any]:
@@ -385,6 +378,7 @@ def recommend_learning() -> Dict[str, Any]:
         },
         "additional_notes": additional_notes
     }
+
 class Dataset(BaseModel):
     dataset: list
 
@@ -470,10 +464,6 @@ async def lazy_predict_endpoint(background_tasks: BackgroundTasks):
     background_tasks.add_task(gc.collect)
     return result
 
-
-
-
-
 @app.get("/visualize/{type}/")
 def visualize(type: str):
     global uploaded_data, lazy_predict_results
@@ -517,7 +507,6 @@ def visualize(type: str):
         plt.close()
         raise HTTPException(status_code=500, detail=f"Error creating visualization: {str(e)}")
 
-
 @app.get("/visualize/feature-importance/")
 def visualize_feature_importance():
     global lazy_predict_results
@@ -549,9 +538,6 @@ def visualize_feature_importance():
     except Exception as e:
         print(f"Error in /visualize/feature-importance/: {str(e)}")  # Log the error
         raise HTTPException(status_code=500, detail=f"Error creating feature importance visualization: {str(e)}")
-@app.get("/visualize/distribution/")
-
-
 
 @app.get("/visualize/distribution/")
 def visualize_distribution(column: str):
@@ -579,8 +565,6 @@ def visualize_distribution(column: str):
     except Exception as e:
         print(f"Error in /visualize/distribution/: {str(e)}")  # Log the error
         raise HTTPException(status_code=500, detail=f"Error creating distribution visualization: {str(e)}")
-    
-
 
 @app.get("/visualize/word-cloud/")
 def visualize_word_cloud(column: str):
@@ -611,10 +595,6 @@ def visualize_word_cloud(column: str):
     except Exception as e:
         print(f"Error in /visualize/word-cloud/: {str(e)}")  # Log the error
         raise HTTPException(status_code=500, detail=f"Error creating word cloud: {str(e)}")
-    
-
-from fastapi.responses import StreamingResponse
-import io
 
 @app.get("/download/")
 async def download_cleaned_data():
@@ -636,3 +616,8 @@ async def download_cleaned_data():
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating download file: {str(e)}")
+
+# Run the FastAPI app
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
