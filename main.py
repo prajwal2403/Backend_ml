@@ -104,7 +104,7 @@ port = int(os.environ.get("PORT", 8000))   # Default to 8000 if PORT is not set
 # Allow CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173","https://ml-n4uxhum84-prajwal2403s-projects.vercel.app/"],  # React frontend URL
+    allow_origins=["http://localhost:5173", "http://localhost:4173","https://ml-web-zeta.vercel.app"],  # React frontend URL
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
